@@ -8,11 +8,16 @@ import org.springframework.context.annotation.Configuration;
 import java.text.MessageFormat;
 
 @Configuration
-@ConditionalOnProperty(name = "kafka.topic")
+@ConditionalOnProperty({"kafka.topic", "kafka.bootstrapServers"})
 public class ProducerConfig extends ProducerConfigBase {
     @Value("${kafka.topic}")
     public void setTopic(String topic) {
         super.setTopic(topic);
+    }
+
+    @Value("${kafka.bootstrapServers}")
+    public void setBootstrapServers(String servers) {
+        super.setBootstrapServers(servers);
     }
 
     public boolean updateWith(ProducerConfigRequest configRequest) {
