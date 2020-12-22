@@ -9,8 +9,9 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.CompletableFuture;
 
 enum MessageLoadStatus {
-    New,
-    Started,
+    NotRunning,
+    Running,
+    Completed,
     Stopped,
     Error
 }
@@ -18,13 +19,13 @@ enum MessageLoadStatus {
 @Component
 public class MessageLoad {
     private static final Logger logger = LogManager.getLogger(MessageLoad.class);
-    private MessageLoadStatus status = MessageLoadStatus.New;
+    private MessageLoadStatus status = MessageLoadStatus.NotRunning;
 
     @JsonIgnore
     private ProducerConfig config;
 
     @JsonIgnore
-    private CompletableFuture<Void> sendResult;
+    private CompletableFuture<Void> sendTaskFuture;
 
     public MessageLoad() {
     }
@@ -42,27 +43,45 @@ public class MessageLoad {
     }
 
     public boolean start() {
-        if (status == MessageLoadStatus.Started)
+        if (status == MessageLoadStatus.Running) {
             return false;
+        }
 
-        status = MessageLoadStatus.Started;
-        sendResult = CompletableFuture.runAsync(this::send);
-        sendResult.thenRun(() -> status = MessageLoadStatus.Stopped);
+        status = MessageLoadStatus.Running;
+        sendTaskFuture = CompletableFuture
+                .runAsync(() -> {
+                    try {
+                        send();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+
+                    logger.info("Message batch task completed");
+                    status = MessageLoadStatus.Completed;
+                })
+                .exceptionally(e -> {
+                    logger.error("Message batch task failed: {}", e.getMessage());
+                    status = MessageLoadStatus.Error;
+                    return null;
+                });
         return true;
     }
 
     public boolean stop() {
+        if (status == MessageLoadStatus.Running) {
+            sendTaskFuture.cancel(true);
+        }
+
         status = MessageLoadStatus.Stopped;
-        sendResult = null;
+        sendTaskFuture = null;
         return true;
     }
 
-    private void send() {
+    private void send() throws Exception {
         try (JsonMessageSender sender = new JsonMessageSender(config.getTopic(), config.getBootstrapServers())) {
-            sender.send("test");
-        } catch (Exception e) {
-            status = MessageLoadStatus.Error;
-            logger.error("Error sending message: " + e.getMessage());
+            logger.info("Sending message batch");
+            MessageSource generator = new MessageSource();
+            generator.getMessages().stream().forEachOrdered(m -> sender.send(m));
         }
     }
 }
